@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:novon/core/common/constants/router_constants.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../../core/theme/novon_colors.dart';
 import '../../../core/common/models/app_update_info.dart';
@@ -50,7 +51,13 @@ class _AppUpdateScreenState extends ConsumerState<AppUpdateScreen> {
         title: const Text('New Update Available'),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => context.pop(),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(RouterConstants.pathLibrary);
+            }
+          },
         ),
       ),
       body: Column(
@@ -73,13 +80,68 @@ class _AppUpdateScreenState extends ConsumerState<AppUpdateScreen> {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: NovonColors.lightSurface,
+                      color: NovonColors.surfaceVariant,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(color: NovonColors.divider),
                     ),
                     child: MarkdownBody(
                       data: widget.updateInfo.changelog,
                       selectable: true,
+                      styleSheet:
+                          MarkdownStyleSheet.fromTheme(
+                            Theme.of(context),
+                          ).copyWith(
+                            p: TextStyle(
+                              color: NovonColors.textSecondary,
+                              height: 1.5,
+                              fontSize: 15,
+                            ),
+                            h1: TextStyle(
+                              color: NovonColors.textPrimary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            h2: TextStyle(
+                              color: NovonColors.textPrimary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            h3: TextStyle(
+                              color: NovonColors.textPrimary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            listBullet: TextStyle(color: NovonColors.primary),
+                            code: TextStyle(
+                              color: NovonColors.accent,
+                              backgroundColor: Colors.transparent,
+                              fontFamily: 'monospace',
+                            ),
+                            codeblockDecoration: BoxDecoration(
+                              color: NovonColors.surfaceElevated,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            blockquoteDecoration: BoxDecoration(
+                              color: NovonColors.info.withValues(alpha: 0.1),
+                              border: Border(
+                                left: BorderSide(
+                                  color: NovonColors.info,
+                                  width: 4,
+                                ),
+                              ),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            blockquotePadding: const EdgeInsets.all(16),
+                            blockquote: TextStyle(
+                              color: NovonColors.textPrimary,
+                              height: 1.5,
+                            ),
+                            horizontalRuleDecoration: BoxDecoration(
+                              border: Border(
+                                top: BorderSide(
+                                  color: NovonColors.divider,
+                                  width: 1,
+                                ),
+                              ),
+                            ),
+                          ),
                     ),
                   ),
                 ],
@@ -174,7 +236,13 @@ class _AppUpdateScreenState extends ConsumerState<AppUpdateScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => context.pop(),
+                    onPressed: () {
+                      if (context.canPop()) {
+                        context.pop();
+                      } else {
+                        context.go(RouterConstants.pathLibrary);
+                      }
+                    },
                     child: const Text('Later'),
                   ),
                 ),
