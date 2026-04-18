@@ -39,6 +39,7 @@ class HiveKeys {
   static const String libraryFilters = 'library_filters';
   static const String customBgColor = 'custom_bg_color';
   static const String customSurfaceColor = 'custom_surface_color';
+  static const String globalChapterSortAscending = 'global_chapter_sort_ascending';
 
   // Downloads
   static const String downloadConcurrent = 'download_concurrent';

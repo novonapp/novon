@@ -1,15 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:drift/drift.dart' show Value;
 import '../../../core/common/models/novel.dart' as m;
 import '../../../core/common/models/chapter.dart' as mc;
 import '../../../core/providers/db_providers.dart';
 import '../../../core/providers/source_provider.dart';
 import '../../../core/services/novel_metadata_service.dart';
-import '../../../features/statistics/providers/statistics_provider.dart'
-    show databaseProvider;
-import '../../../core/data/database/database.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import '../../../core/common/constants/hive_constants.dart';
 
 final novelDetailControllerProvider = Provider<NovelDetailController>((ref) {
   return NovelDetailController(ref);
@@ -158,12 +156,9 @@ class NovelDetailController {
   /// Retrieves the localized relational flag for chapter ordering preferences
   /// associated with the specific novel.
   Future<bool> loadChapterSortPreference(String novelUrl) async {
-    final db = ref.read(databaseProvider);
-    final flag = await (db.select(
-      db.libraryFlags,
-    )..where((t) => t.novelId.equals(novelUrl))).getSingleOrNull();
-    final mode = flag?.displayMode ?? '';
-    return mode == 'chapter_sort:asc';
+    final box = Hive.box(HiveBox.app);
+    return box.get(HiveKeys.globalChapterSortAscending, defaultValue: true)
+        as bool;
   }
 
   /// Persists a localized relational flag to determine the chronological
@@ -172,16 +167,8 @@ class NovelDetailController {
     String novelUrl,
     bool ascending,
   ) async {
-    final db = ref.read(databaseProvider);
-    final mode = ascending ? 'chapter_sort:asc' : 'chapter_sort:desc';
-    await db
-        .into(db.libraryFlags)
-        .insertOnConflictUpdate(
-          LibraryFlagsCompanion.insert(
-            novelId: novelUrl,
-            displayMode: Value(mode),
-          ),
-        );
+    final box = Hive.box(HiveBox.app);
+    await box.put(HiveKeys.globalChapterSortAscending, ascending);
   }
 
   /// Pre-computes O(1) lookup maps for read-state and progress from the raw
