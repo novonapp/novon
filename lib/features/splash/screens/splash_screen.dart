@@ -10,6 +10,8 @@ import '../../../core/theme/theme_provider.dart';
 import 'package:novon/core/common/constants/hive_constants.dart';
 import 'package:novon/core/common/constants/router_constants.dart';
 import 'package:novon/core/common/constants/app_constants.dart';
+import 'package:novon/core/services/novel_metadata_service.dart';
+import 'package:novon/core/providers/db_providers.dart';
 
 /// Primary bootstrap orchestration interface, responsible for application warmup,
 /// settings pre-loading, and primary navigation routing upon environment readiness.
@@ -77,6 +79,14 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     } catch (_) {
       // Never block startup forever if settings warmup fails.
     }
+
+    // ensure all library covers are cached locally for
+    // offline visibility. This runs in the background and never blocks startup.
+    NovelMetadataService.instance
+        .ensureAllLibraryCoversLocal(
+          novelRepo: ref.read(novelRepositoryProvider),
+        )
+        .catchError((_) {});
 
     final elapsed = DateTime.now().difference(startedAt);
     final remaining = _minSplashDuration - elapsed;

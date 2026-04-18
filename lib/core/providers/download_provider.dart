@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:background_downloader/background_downloader.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -68,9 +69,14 @@ final chapterDownloadControllerProvider =
 
 final chapterDownloadInfoProvider =
     Provider.family<ChapterDownloadInfo?, String>((ref, chapterId) {
-      return ref.watch(chapterDownloadControllerProvider)[chapterId];
+      return ref.watch(
+        chapterDownloadControllerProvider.select((state) => state[chapterId]),
+      );
     });
 
+/// Manages the lifecycle of chapter download tasks, providing debounced state
+/// emission and throttled persistence to prevent UI thread starvation during
+/// high-volume bulk download operations.
 class ChapterDownloadController
     extends StateNotifier<Map<String, ChapterDownloadInfo>> {
   ChapterDownloadController(this.ref) : super(const {}) {
@@ -79,6 +85,28 @@ class ChapterDownloadController
   }
 
   final Ref ref;
+
+  /// Accumulates state mutations between debounce ticks. Updated synchronously
+  /// from callbacks without triggering Riverpod rebuilds until flushed.
+  final Map<String, ChapterDownloadInfo> _pending = {};
+
+  /// Timer for debouncing progress emissions. Batches rapid-fire progress
+  /// updates into a single Riverpod state emission per tick.
+  Timer? _emitTimer;
+
+  /// Timer for debouncing Hive persistence. Writes at most once per interval.
+  Timer? _persistTimer;
+  bool _persistScheduled = false;
+
+  static const _emitInterval = Duration(milliseconds: 300);
+  static const _persistInterval = Duration(milliseconds: 500);
+
+  @override
+  void dispose() {
+    _emitTimer?.cancel();
+    _persistTimer?.cancel();
+    super.dispose();
+  }
 
   void _hydrate() {
     final box = Hive.box(HiveBox.app);
@@ -93,15 +121,44 @@ class ChapterDownloadController
       }
     }
     state = parsed;
+    _pending.addAll(parsed);
   }
 
-  Future<void> _persist() async {
+  /// Persists the current state to Hive immediately.
+  Future<void> _persistNow() async {
     final box = Hive.box(HiveBox.app);
     final out = <String, dynamic>{};
     for (final e in state.entries) {
       out[e.key] = e.value.toJson();
     }
     await box.put(HiveKeys.downloadTaskState, out);
+  }
+
+  /// Schedules a debounced persist. Multiple calls within the interval
+  /// collapse into a single Hive write.
+  void _schedulePersist() {
+    if (_persistScheduled) return;
+    _persistScheduled = true;
+    _persistTimer?.cancel();
+    _persistTimer = Timer(_persistInterval, () {
+      _persistScheduled = false;
+      _persistNow();
+    });
+  }
+
+  /// Flushes all pending mutations into a single Riverpod state emission
+  /// and schedules a debounced Hive persist.
+  void _flushPending() {
+    if (!mounted) return;
+    state = Map<String, ChapterDownloadInfo>.from(_pending);
+    _schedulePersist();
+  }
+
+  /// Schedules a debounced state emission.
+  /// accumulate in _pending and get flushed as one batch per tick.
+  void _scheduleEmit() {
+    if (_emitTimer?.isActive == true) return;
+    _emitTimer = Timer(_emitInterval, _flushPending);
   }
 
   void _registerCallbacks() {
@@ -138,25 +195,20 @@ class ChapterDownloadController
       allowPause: true,
       metaData: metadata,
     );
-    state = {
-      ...state,
-      chapterId: const ChapterDownloadInfo(
-        status: ChapterDownloadStatus.queued,
-        progress: 0,
-      ),
-    };
-    await _persist();
+
+    _pending[chapterId] = const ChapterDownloadInfo(
+      status: ChapterDownloadStatus.queued,
+      progress: 0,
+    );
+    _flushPending();
 
     final ok = await FileDownloader().enqueue(task);
     if (!ok) {
-      state = {
-        ...state,
-        chapterId: const ChapterDownloadInfo(
-          status: ChapterDownloadStatus.failed,
-          error: 'Failed to enqueue task',
-        ),
-      };
-      await _persist();
+      _pending[chapterId] = const ChapterDownloadInfo(
+        status: ChapterDownloadStatus.failed,
+        error: 'Failed to enqueue task',
+      );
+      _flushPending();
     }
   }
 
@@ -165,14 +217,79 @@ class ChapterDownloadController
     required String novelId,
     required List<m.Chapter> chapters,
   }) async {
-    for (final ch in chapters) {
-      await enqueueChapter(
-        sourceId: sourceId,
-        novelId: novelId,
-        chapterId: ch.id,
-        chapterName: ch.name,
-        chapterUrl: ch.url,
-      );
+    if (chapters.isEmpty) return;
+
+    // Yield control to let UI animations (like closing the bottom sheet) finish.
+    await Future.delayed(const Duration(milliseconds: 350));
+    if (!mounted) return;
+
+    final tasks = <DownloadTask>[];
+
+    // Construct tasks in small batches. Passing thousands of strings through
+    // regex and JSON encoders on the main thread will cause frame drops.
+    const constructBatchSize = 15;
+    for (var i = 0; i < chapters.length; i += constructBatchSize) {
+      final end = (i + constructBatchSize).clamp(0, chapters.length);
+      for (var j = i; j < end; j++) {
+        final ch = chapters[j];
+        _pending[ch.id] = const ChapterDownloadInfo(
+          status: ChapterDownloadStatus.queued,
+          progress: 0,
+        );
+
+        final safeName = ch.name
+            .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+        final filename =
+            '${safeName.isEmpty ? "chapter" : safeName}_${ch.id.hashCode}';
+        final metadata = jsonEncode({
+          'sourceId': sourceId,
+          'novelId': novelId,
+          'chapterId': ch.id,
+          'chapterUrl': ch.url,
+        });
+
+        tasks.add(
+          DownloadTask(
+            url: ch.url,
+            filename: filename,
+            updates: Updates.status,
+            retries: 3,
+            allowPause: true,
+            metaData: metadata,
+          ),
+        );
+      }
+      // Yield 2ms between heavy allocations to give the event loop breathing room.
+      if (end < chapters.length) {
+        await Future.delayed(const Duration(milliseconds: 2));
+      }
+    }
+
+    // Emit state changes to Riverpod once.
+    // We intentionally rely on `_schedulePersist` inside `_flushPending`
+    // rather than calling `await _persistNow()` here. Serializing the entire
+    // state map to JSON for Hive blocks the UI thread heavily. Deflecting it
+    // saves major frames.
+    _flushPending();
+
+    // Stagger platform channel IPC calls heavily.
+    // As requested, introduce explicit latency between EACH chapter download.
+    // This creates a cascade effect that:
+    // 1. Spreads out platform channel IPC overhead.
+    // 2. Prevents network bandwidth saturation.
+    // 3. Prevents the "JavaScript parsing storm" where 25 chapters finish
+    //    downloading simultaneously and immediately lock the UI thread
+    //    executing 25 V8 engine parses back-to-back.
+    for (var i = 0; i < tasks.length; i++) {
+      if (!mounted) return;
+      FileDownloader().enqueue(tasks[i]);
+
+      if (i < tasks.length - 1) {
+        // Enqueue one chapter every 600ms
+        await Future.delayed(const Duration(milliseconds: 600));
+      }
     }
   }
 
@@ -183,17 +300,13 @@ class ChapterDownloadController
     final chapter = await chapterRepo.getChapter(chapterId);
 
     if (chapter != null) {
-      // Mark as NOT downloaded in SQLite.
       await chapterRepo.updateChapter(chapter.copyWith(downloaded: false));
-      // Remove content from SQLite.
       await chapterRepo.deleteChapterContent(chapterId);
     }
 
-    // Remove from in-memory state and persistence.
-    final next = Map<String, ChapterDownloadInfo>.from(state);
-    next.remove(chapterId);
-    state = next;
-    await _persist();
+    _pending.remove(chapterId);
+    _flushPending();
+    await _persistNow();
   }
 
   /// Executes an exhaustive liquidation of all localized download data and
@@ -201,35 +314,33 @@ class ChapterDownloadController
   Future<void> clearAllDownloads() async {
     final db = ref.read(databaseProvider);
 
-    // Reset all downloaded flags.
     await db.customStatement('UPDATE chapters SET downloaded = 0;');
-    // Clear all content.
     await db.customStatement('DELETE FROM chapter_contents;');
 
-    // Reset state.
+    _pending.clear();
     state = const {};
-    await _persist();
+    await _persistNow();
   }
 
   void _onProgressUpdate(TaskProgressUpdate update) {
     final meta = _parseMeta(update.task.metaData);
     final chapterId = meta['chapterId']?.toString();
     if (chapterId == null || chapterId.isEmpty) return;
-    final existing = state[chapterId];
-    state = {
-      ...state,
-      chapterId:
-          (existing ??
-                  const ChapterDownloadInfo(
-                    status: ChapterDownloadStatus.downloading,
-                  ))
-              .copyWith(
-                status: ChapterDownloadStatus.downloading,
-                progress: (update.progress * 100).clamp(0, 100),
-                taskId: update.task.taskId,
-              ),
-    };
-    _persist();
+
+    final existing = _pending[chapterId];
+    _pending[chapterId] =
+        (existing ??
+                const ChapterDownloadInfo(
+                  status: ChapterDownloadStatus.downloading,
+                ))
+            .copyWith(
+              status: ChapterDownloadStatus.downloading,
+              progress: (update.progress * 100).clamp(0, 100),
+              taskId: update.task.taskId,
+            );
+
+    // Debounced: accumulate in _pending, flush on next timer tick.
+    _scheduleEmit();
   }
 
   Future<void> _onStatusUpdate(TaskStatusUpdate update) async {
@@ -248,22 +359,20 @@ class ChapterDownloadController
     if (statusName.contains('failed')) mapped = ChapterDownloadStatus.failed;
     if (statusName.contains('paused')) mapped = ChapterDownloadStatus.paused;
 
-    state = {
-      ...state,
-      chapterId: ChapterDownloadInfo(
-        status: mapped,
-        progress: mapped == ChapterDownloadStatus.complete
-            ? 100
-            : (state[chapterId]?.progress ?? 0),
-        taskId: update.task.taskId,
-        error: update.exception?.description,
-      ),
-    };
-    await _persist();
+    _pending[chapterId] = ChapterDownloadInfo(
+      status: mapped,
+      progress: mapped == ChapterDownloadStatus.complete
+          ? 100
+          : (_pending[chapterId]?.progress ?? 0),
+      taskId: update.task.taskId,
+      error: update.exception?.description,
+    );
+
+    // Status changes are important, flush immediately rather than debouncing.
+    _flushPending();
 
     if (mapped == ChapterDownloadStatus.complete) {
       final chapterRepo = ref.read(chapterRepositoryProvider);
-      // Wait for content to be cached BEFORE marking as downloaded
       final success = await _cacheChapterHtmlFromWeb(
         meta,
         chapterRepo: chapterRepo,
@@ -275,15 +384,11 @@ class ChapterDownloadController
           await chapterRepo.updateChapter(current.copyWith(downloaded: true));
         }
       } else {
-        // If caching failed, revert status to failed
-        state = {
-          ...state,
-          chapterId: state[chapterId]!.copyWith(
-            status: ChapterDownloadStatus.failed,
-            error: 'Failed to extract and save chapter content locally.',
-          ),
-        };
-        await _persist();
+        _pending[chapterId] = _pending[chapterId]!.copyWith(
+          status: ChapterDownloadStatus.failed,
+          error: 'Failed to extract and save chapter content locally.',
+        );
+        _flushPending();
       }
     }
   }
@@ -302,12 +407,10 @@ class ChapterDownloadController
       return false;
     }
     try {
-      // Load extension script source for parsing.
       final loader = ExtensionLoader.instance;
       final script = await loader.loadScriptSource(sourceId);
       if (script == null) return false;
 
-      // Use ExtensionEngine to fetch CONTENT, ensuring correct JS parsing.
       final engine = ExtensionEngine.instance;
       final result = await engine.fetchChapterContent(
         sourceId,
@@ -331,7 +434,6 @@ class ChapterDownloadController
 
       final variants = _chapterUrlVariants(chapterUrl);
 
-      // Sync with Hive if needed (for legacy/cross-bridge support).
       final box = Hive.box(HiveBox.app);
       final raw = box.get(HiveKeys.chapterHtmlCache);
       final cache = raw is Map
@@ -347,7 +449,6 @@ class ChapterDownloadController
       }
       await box.put(HiveKeys.chapterHtmlCache, cache);
 
-      // Save to standardized SQLite repository.
       final chapter = await chapterRepo.getChapter(variants.first);
       await chapterRepo.cacheChapterContent(
         m.ChapterContent(
@@ -360,7 +461,6 @@ class ChapterDownloadController
 
       return true;
     } catch (_) {
-      // Download failed to cache content locally.
       return false;
     }
   }

@@ -290,6 +290,38 @@ class NovelMetadataService {
     } catch (_) {}
   }
 
+  /// Scans all library novels and downloads any remaining remote cover URLs
+  /// to local storage. This ensures covers are always visible offline.
+  /// Should be called once during app startup as a fire-and-forget task.
+  Future<void> ensureAllLibraryCoversLocal({
+    required NovelRepository novelRepo,
+  }) async {
+    try {
+      final sps = StoragePathService.instance;
+      if (!sps.isConfigured) return;
+
+      final novels = await novelRepo.getLibraryNovels();
+      for (final novel in novels) {
+        if (novel.coverUrl.isEmpty) continue;
+        // Skip if already a local path.
+        if (novel.coverUrl.startsWith('/')) continue;
+
+        final localPath = await _downloadCoverLocally(
+          novel.coverUrl,
+          novel.id,
+          sps.coversDir,
+        );
+        if (localPath != null) {
+          await novelRepo.patchNovelMetadata(novel.id, coverUrl: localPath);
+        }
+      }
+    } catch (e) {
+      developer.log(
+        '[NovelMetadataService] ensureAllLibraryCoversLocal error: $e',
+      );
+    }
+  }
+
   /// Facilitates the acquisition and localized persistence of remote cover assets.
   Future<String?> _downloadCoverLocally(
     String remoteUrl,
