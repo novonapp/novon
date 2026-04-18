@@ -5,7 +5,7 @@ import '../../../core/common/widgets/novel_cover_image.dart';
 import 'status_badge.dart';
 import 'inline_shimmer_line.dart';
 
-/// An expandable SliverAppBar-based header providing primary visual context, 
+/// An expandable SliverAppBar-based header providing primary visual context,
 /// including cover imagery, hierarchical metadata, and status indicators.
 class NovelDetailHeader extends StatelessWidget {
   final AsyncValue<dynamic> detail;
@@ -26,7 +26,7 @@ class NovelDetailHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SliverAppBar(
-      expandedHeight: 320,
+      expandedHeight: 280,
       pinned: true,
       actions: [
         IconButton(
@@ -39,6 +39,15 @@ class NovelDetailHeader extends StatelessWidget {
         background: Stack(
           fit: StackFit.expand,
           children: [
+            Opacity(
+              opacity: .3,
+              child: NovelCoverImage(
+                imageUrl: headerCoverUrl,
+                width: double.infinity,
+                height: double.infinity,
+                borderRadius: 0,
+              ),
+            ),
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -92,17 +101,16 @@ class NovelDetailHeader extends StatelessWidget {
       loading: () => const InlineShimmerLine(width: 220, height: 18),
       error: (_, _) => Text(
         'Failed to load',
-        style: Theme.of(context)
-            .textTheme
-            .headlineSmall
-            ?.copyWith(color: NovonColors.textPrimary),
+        style: Theme.of(
+          context,
+        ).textTheme.headlineSmall?.copyWith(color: NovonColors.textPrimary),
       ),
       data: (d) => Text(
         d.title.isEmpty ? (initialTitle ?? 'Unknown') : d.title,
         style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-              color: NovonColors.textPrimary,
-              fontWeight: FontWeight.w700,
-            ),
+          color: NovonColors.textPrimary,
+          fontWeight: FontWeight.w700,
+        ),
         maxLines: 3,
         overflow: TextOverflow.ellipsis,
       ),
@@ -115,10 +123,9 @@ class NovelDetailHeader extends StatelessWidget {
       error: (_, _) => const SizedBox.shrink(),
       data: (d) => Text(
         d.author ?? '',
-        style: Theme.of(context)
-            .textTheme
-            .bodyMedium
-            ?.copyWith(color: NovonColors.primary),
+        style: Theme.of(
+          context,
+        ).textTheme.bodyMedium?.copyWith(color: NovonColors.primary),
       ),
     );
   }
@@ -137,10 +144,9 @@ class NovelDetailHeader extends StatelessWidget {
         const SizedBox(width: 8),
         Text(
           '• $sourceId',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(color: NovonColors.textTertiary),
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: NovonColors.textTertiary),
         ),
       ],
     );

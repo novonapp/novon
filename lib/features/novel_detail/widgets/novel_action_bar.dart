@@ -86,7 +86,6 @@ class NovelActionBar extends ConsumerWidget {
                   downloadedState,
                   novelUrl,
                   sourceId,
-                  false, // ascending defaults to false unless passed differently
                 ),
                 icon: const Icon(Icons.download_rounded),
                 color: NovonColors.textSecondary,

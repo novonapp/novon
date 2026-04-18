@@ -5,7 +5,7 @@ class AppConstants {
 
   static const String appName = 'Novon';
   static const String appVersion =
-      '0.0.1'; // Should ideally be fetched from package_info
+      '0.0.2'; // Should ideally be fetched from package_info
 
   // Storage
   static const String defaultStoragePath = 'Novon';

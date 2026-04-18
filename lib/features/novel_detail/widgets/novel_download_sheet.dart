@@ -14,7 +14,6 @@ class NovelDownloadSheet {
     Set<String> downloadedState,
     String novelUrl,
     String sourceId,
-    bool ascending,
   ) {
     final list = chapters.valueOrNull ?? const <SourceChapter>[];
     if (list.isEmpty) return;
@@ -23,7 +22,7 @@ class NovelDownloadSheet {
     sorted.sort((a, b) {
       final an = a.number ?? -1;
       final bn = b.number ?? -1;
-      return ascending ? an.compareTo(bn) : bn.compareTo(an);
+      return an.compareTo(bn);
     });
     
     final controller = ref.read(novelDetailControllerProvider);
@@ -57,6 +56,7 @@ class NovelDownloadSheet {
               sorted
                   .where(
                     (c) =>
+                        !controller.containsNormalized(readState, c.url) &&
                         !controller.containsNormalized(downloadedState, c.url),
                   )
                   .take(10)
@@ -72,6 +72,7 @@ class NovelDownloadSheet {
               sorted
                   .where(
                     (c) =>
+                        !controller.containsNormalized(readState, c.url) &&
                         !controller.containsNormalized(downloadedState, c.url),
                   )
                   .take(25)
