@@ -58,9 +58,6 @@ class _NovelDetailScreenState extends ConsumerState<NovelDetailScreen> {
           .read(novelDetailControllerProvider)
           .loadChapterSortPreference(novelUrl);
       if (mounted) setState(() => _ascending = asc);
-
-      // Kick off the background metadata + chapter refresh silently.
-      _refreshInBackground(novelUrl);
     });
   }
 
@@ -118,19 +115,19 @@ class _NovelDetailScreenState extends ConsumerState<NovelDetailScreen> {
       detail = liveDetail;
     }
 
-    final chapters = isLibraryNovel
-        ? ref.watch(
-            sourceChapterListProvider((
-              sourceId: widget.sourceId,
-              novelUrl: novelUrl,
-            )),
-          )
-        : ref.watch(
-            sourceChapterListProvider((
-              sourceId: widget.sourceId,
-              novelUrl: novelUrl,
-            )),
-          );
+    // Only fetch from the network if we don't already have cached chapters.
+    // This prevents redundant JS engine + network I/O on every re-entry.
+    final AsyncValue<List<SourceChapter>> chapters;
+    if (cachedChapters.isNotEmpty) {
+      chapters = AsyncData(cachedChapters);
+    } else {
+      chapters = ref.watch(
+        sourceChapterListProvider((
+          sourceId: widget.sourceId,
+          novelUrl: novelUrl,
+        )),
+      );
+    }
 
     final resolvedChapters = cachedChapters.isNotEmpty
         ? cachedChapters
@@ -257,59 +254,6 @@ class _NovelDetailScreenState extends ConsumerState<NovelDetailScreen> {
     );
   }
 
-  void _refreshInBackground(String novelUrl) {
-    Future.microtask(() async {
-      final novelRepo = ref.read(novelRepositoryProvider);
-      final chapterRepo = ref.read(chapterRepositoryProvider);
-      final sps = StoragePathService.instance;
-      final storagePath = sps.storagePath;
-      if (storagePath == null) return;
-
-      final cached = await novelRepo.getNovelById(novelUrl);
-      if (cached == null || !cached.inLibrary) return;
-
-      final sourceFile = File(
-        '$storagePath/extensions/${widget.sourceId}/source.js',
-      );
-      if (!await sourceFile.exists()) return;
-      final scriptSource = await sourceFile.readAsString();
-      final engine = ExtensionEngine.instance;
-
-      Map<String, dynamic> freshDetail = {};
-      List<dynamic> freshChapters = [];
-
-      await Future.wait([
-        () async {
-          try {
-            final raw = await engine.fetchNovelDetail(
-              widget.sourceId,
-              scriptSource,
-              novelUrl,
-            );
-            freshDetail = Map<String, dynamic>.from(raw as Map);
-          } catch (_) {}
-        }(),
-        () async {
-          try {
-            final raw = await engine.fetchChapterList(
-              widget.sourceId,
-              scriptSource,
-              novelUrl,
-            );
-            freshChapters = List<dynamic>.from(raw as List);
-          } catch (_) {}
-        }(),
-      ]);
-
-      await NovelMetadataService.instance.refreshIfInLibrary(
-        novelUrl: novelUrl,
-        novelRepo: novelRepo,
-        chapterRepo: chapterRepo,
-        freshDetail: freshDetail,
-        freshChapters: freshChapters,
-      );
-    });
-  }
 
   Future<void> _forceRefreshAll(String novelUrl) async {
     final novelRepo = ref.read(novelRepositoryProvider);
