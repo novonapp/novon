@@ -448,16 +448,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     _lineHeight = ref.read(readerLineHeightProvider);
     _readerFontFamily = ref.read(readerFontFamilyProvider);
 
-    // Fallback if an Arabic font is saved but the source is not Arabic
-    if (!_isArabicSource &&
-        const [
-          'Alexandria',
-          'El Messiri',
-          'Lalezar',
-        ].contains(_readerFontFamily)) {
-      _readerFontFamily = 'System';
-    }
-
     final box = Hive.box(HiveBox.reader);
     final bg = box.get(HiveKeys.readerCustomBg);
     final fg = box.get(HiveKeys.readerCustomText);

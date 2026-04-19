@@ -1,7 +1,7 @@
 name: novon
 description: "Novon | A free, open-source, cross-platform novel reader built with Flutter."
 publish_to: 'none'
-version: 0.0.4+1
+version: 0.0.5+1
 
 environment:
   sdk: ^3.10.8
